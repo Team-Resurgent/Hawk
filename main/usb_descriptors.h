@@ -4,9 +4,16 @@
 
 // One device, two vendor-class (0x78) interfaces, one iso endpoint each:
 //   interface 0 = headphone: iso OUT EP 0x04 (Xbox -> device audio)
-//   interface 1 = microphone: iso IN EP 0x85 (device -> Xbox audio)
+//   interface 1 = microphone: iso IN EP 0x81 (device -> Xbox audio)
+//
+// The real communicator puts the mic on IN endpoint 5 (EP 0x85), but the
+// ESP32-S3 FS USB controller only has 5 IN endpoints (0-4) -- EP5 IN does not
+// exist in hardware, so arming it makes every iso-IN transfer "incomplete"
+// (the core sends a zero-length packet -> the Xbox hears silence). The Xbox's
+// Hawk driver reads the endpoint address straight from the descriptor, so
+// using IN endpoint 1 is transparent to the host.
 #define HAWK_EP_HEADPHONE_OUT  0x04
-#define HAWK_EP_MIC_IN         0x85
+#define HAWK_EP_MIC_IN         0x81
 
 // wMaxPacketSize on both iso endpoints. 50 = 24 samples (24 kHz frame) + the
 // extra sample that 11.025/22.05 kHz rates carry on some frames, matching the
