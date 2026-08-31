@@ -263,6 +263,10 @@ VOID __cdecl main()
 
     CHawkLoopback aPorts[4];
 
+    // After a failed open, wait before retrying that port: a tight retry loop
+    // hammers EP0 with open/close cycles hard enough to wedge the USB stack.
+    DWORD adwRetryAt[4] = { 0, 0, 0, 0 };
+
     DWORD dwLastPrint = GetTickCount();
     for( ;; )
     {
@@ -276,12 +280,16 @@ VOID __cdecl main()
         {
             BOOL bPresent = ( dwMicState & ( 1 << i ) ) &&
                             ( dwHpState  & ( 1 << i ) );
-            if( bPresent && !( dwConnected & ( 1 << i ) ) )
+            if( bPresent && !( dwConnected & ( 1 << i ) ) &&
+                (LONG)( GetTickCount() - adwRetryAt[i] ) >= 0 )
             {
                 if( SUCCEEDED( aPorts[i].Inserted( i ) ) )
                     dwConnected |= ( 1 << i );
                 else
+                {
                     aPorts[i].Removed();
+                    adwRetryAt[i] = GetTickCount() + 2000;
+                }
             }
             else if( !bPresent && ( dwConnected & ( 1 << i ) ) )
             {
