@@ -12,7 +12,7 @@
   <a href="https://www.patreon.com/teamresurgent"><img src="https://img.shields.io/badge/Patreon-F96854?style=for-the-badge&logo=patreon&logoColor=white" alt="Patreon"></a>
 </p>
 
-Hawk makes an ESP32-S3 present itself as the **original Xbox Communicator**
+Eagle makes an ESP32-S3 present itself as the **original Xbox Communicator**
 (the controller headset — Microsoft's internal codename for it really was
 *Hawk*), so an **unmodified** Xbox title sees a real communicator: microphone
 in, headphone out. Sibling of
