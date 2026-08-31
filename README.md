@@ -50,7 +50,7 @@ Planned next: stream a decoded **OGG file** as the mic source, WiFi
 provisioning/web UI (ported from Talon's `wifi_net`), and eventually a real
 I2S microphone/speaker path.
 
-## Protocol (recovered from the leaked XDK + xemu)
+## Protocol
 
 The communicator is one USB 1.1 device, VID/PID `045E:0283`, with **two
 vendor-specific interfaces of class `0x78`**, one isochronous endpoint each:
