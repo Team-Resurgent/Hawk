@@ -1,0 +1,19 @@
+// Hawk — WiFi credentials for the optional UDP debug logger.
+//
+// Only needed when CONFIG_HAWK_WIFI_LOG is enabled (menuconfig ->
+// "Hawk communicator emulator" -> "WiFi UDP live-log broadcast"). The default
+// build leaves it OFF, so you do NOT need this file to build or run.
+//
+// To use the WiFi logger:
+//   1. cp main/wifi_creds.h.example main/wifi_creds.h
+//   2. fill in your SSID / password below
+//   3. enable HAWK_WIFI_LOG in menuconfig
+//
+// main/wifi_creds.h is gitignored on purpose — never commit real credentials.
+// Keep WiFi logging OFF for real Xbox tests until proven harmless here: on
+// Falcon, joining WiFi loaded the CPU/radio enough to break the Xbox's
+// timing-strict USB enumeration.
+#pragma once
+
+#define HAWK_WIFI_SSID  "your-ssid"
+#define HAWK_WIFI_PASS  "your-password"

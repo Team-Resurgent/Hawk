@@ -1,0 +1,23 @@
+CONFIG_IDF_TARGET="esp32s3"
+
+# The native USB-OTG port is the emulated communicator, so the console + flashing
+# must use UART0. USB-Serial-JTAG would fight the TinyUSB device on the PHY.
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+CONFIG_ESP_CONSOLE_UART_BAUDRATE=115200
+
+# Partition table (single app; adjust flash size to your board).
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+# TinyUSB device stack (esp_tinyusb). No stock class is enabled — Hawk supplies
+# its own descriptors and a custom class driver (usbd_app_driver_get_cb). EP0
+# size is pinned to 8 in tusb_config.h to match the real device descriptor.
+CONFIG_TINYUSB_DEBUG_LEVEL=1
+
+# Force TinyUSB dwc2 SLAVE mode: the ESP32-S3 OTG DMA engine corrupts the EP0
+# SETUP doepdma pointer under iso load and crashes (proved out on Falcon).
+# Slave/FIFO mode copies via CPU and is stable; hawk's 50-byte iso packets are
+# far below any FIFO pressure.
+CONFIG_TINYUSB_MODE_SLAVE=y

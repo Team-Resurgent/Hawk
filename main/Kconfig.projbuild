@@ -1,0 +1,18 @@
+menu "Hawk communicator emulator"
+
+config HAWK_WIFI_LOG
+    bool "WiFi UDP live-log broadcast (debug only; needs main/wifi_creds.h)"
+    default n
+    help
+        Mirror every ESP_LOG line as a UDP broadcast on port 5556 so a PC on the
+        LAN can watch the communicator while it is plugged into a distant Xbox
+        controller. When enabled, main/wifi_log.c is compiled and requires a
+        local, gitignored main/wifi_creds.h with your SSID/password (copy
+        main/wifi_creds.h.example).
+
+        Keep this OFF for real Xbox tests until proven harmless for this device:
+        on Falcon (same board, heavier iso traffic), joining WiFi loaded the
+        CPU/radio enough to break the Xbox's timing-strict USB enumeration. It
+        is off by default so the project builds with no secrets present.
+
+endmenu
