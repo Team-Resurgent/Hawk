@@ -1,0 +1,10 @@
+{
+  "name": "HawkLoopback",
+  "configuration": "debug",
+  "sources": ["HawkLoopback.cpp"],
+  "libraries": ["libxbdm", "libxapi", "libdsound", "libkernel", "libxvoice", "libc", "libcpp"],
+  "defines": [],
+  "createIso": true,
+  "imageBuild": { "stackSize": 65536, "debug": true, "noLogo": true, "noLibWarn": true, "limitMemory": false, "dontModifyHardDisk": false, "dontMountUtilityDrive": true, "formatUtilityDrive": false, "testId": "0xffff4841", "testName": "HawkLoopback", "testVersion": "4096" },
+  "outputDir": "out\\Debug"
+}
