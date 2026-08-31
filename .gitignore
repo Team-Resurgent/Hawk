@@ -24,6 +24,7 @@ xbox/HawkLoopback/out/*
 *.log
 
 # scratch serial captures
-serial_*
-*.txt
-sl*.txt
+serial_diag.txt
+serial_*.log
+sl.txt
+sl2.txt
