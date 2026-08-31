@@ -23,6 +23,7 @@ extern volatile uint32_t g_hawk_out_pkts, g_hawk_out_bytes, g_hawk_out_err;
 extern volatile uint32_t g_hawk_out_energy, g_hawk_out_samples, g_hawk_out_zc;
 extern volatile int16_t  g_hawk_out_peak;
 void hawk_class_get_state(uint8_t *rate_index, uint8_t *mic_open, uint8_t *out_open);
+void hawk_class_kick(void);
 
 void app_main(void) {
     // WiFi logging is OFF by default (Kconfig: HAWK_WIFI_LOG). Falcon showed the
@@ -53,9 +54,22 @@ void app_main(void) {
     // and judge the headphone-return audio (level + zero-crossing frequency).
     uint32_t last_mic = 0, last_out = 0;
     for (uint32_t t = 0;; t += 2) {
-        vTaskDelay(pdMS_TO_TICKS(2000));
+        for (int k = 0; k < 8; k++) {          // watchdog kick 4x/s
+            vTaskDelay(pdMS_TO_TICKS(250));
+            hawk_class_kick();
+        }
         uint8_t rate_idx, mic_open, out_open;
         hawk_class_get_state(&rate_idx, &mic_open, &out_open);
+
+        // Raw dwc2 EP0 state (ESP32-S3 USB-OTG at 0x60080000): shows a SETUP
+        // the hardware latched even if no TinyUSB event ever surfaced, and any
+        // stall bits. GINTSTS 0x14, GRXSTSR 0x1C (non-destructive peek),
+        // DIEPCTL0 0x900, DIEPINT0 0x908, DOEPCTL0 0xB00, DOEPINT0 0xB08.
+        #define DWC2R(off) (*(volatile uint32_t *)(0x60080000 + (off)))
+        ESP_LOGI(TAG, "dwc2 gintsts=%08lx grxstsr=%08lx diepctl0=%08lx diepint0=%08lx doepctl0=%08lx doepint0=%08lx",
+                 (unsigned long)DWC2R(0x14), (unsigned long)DWC2R(0x1C),
+                 (unsigned long)DWC2R(0x900), (unsigned long)DWC2R(0x908),
+                 (unsigned long)DWC2R(0xB00), (unsigned long)DWC2R(0xB08));
 
         // Snapshot + reset the audio accumulators for a per-interval reading.
         uint32_t energy  = g_hawk_out_energy;  g_hawk_out_energy = 0;

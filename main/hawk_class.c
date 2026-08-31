@@ -1,9 +1,9 @@
 // Hawk — custom TinyUSB application class driver for the Xbox Communicator.
 //
-// Owns both vendor-class (0x78) interfaces. There are no alt-settings: the
-// Xbox's Hawk driver simply opens each interface's iso endpoint when a title
-// creates the matching XMediaObject, so the device keeps both endpoints armed
-// at all times:
+// Owns both vendor-class (0x78) interfaces. There are no alt-settings. The iso
+// endpoints are armed LAZILY -- only once the Xbox's vendor SET_FEATURE(sample
+// rate) request has landed on EP0 (see the s_stream_enable note below), never
+// at SET_CONFIGURATION time. Then:
 //   - mic IN (EP 0x85): continuously offers tone packets sized to the current
 //     sample rate's per-frame cadence (see hawk_rates[]).
 //   - headphone OUT (EP 0x04): continuously receives whatever the Xbox plays
@@ -26,6 +26,10 @@
 
 static const char *TAG = "hawk.cls";
 
+// Vendor SET_FEATURE selectors (wIndex), from the leaked Hawk driver.
+#define HAWK_VENDOR_FEATURE_SAMPLE_RATE 0
+#define HAWK_VENDOR_FEATURE_AGC         1
+
 // Diagnostic counters (read by the heartbeat logger in hawk_main.c).
 volatile uint32_t g_hawk_reset, g_hawk_open, g_hawk_ctrl_rate, g_hawk_ctrl_agc;
 volatile uint32_t g_hawk_mic_pkts, g_hawk_mic_bytes, g_hawk_mic_err, g_hawk_mic_sfail;
@@ -43,9 +47,11 @@ static bool     s_mic_open, s_out_open;
 // Keeping the iso IN endpoint armed while the host is NOT polling makes the
 // dwc2 core raise "incomplete ISO IN" every frame (a ~500/s error storm that
 // can wedge EP0 handling in slave mode). The Xbox always sends the vendor
-// SET_FEATURE(sample rate) right before it opens the iso pipe, so gate mic
-// arming on that; a long error streak (host stopped polling) disarms again.
-static bool     s_mic_stream_enable;
+// SET_FEATURE(sample rate) right before it opens the iso pipe, so gate BOTH
+// iso endpoints on that request; a long mic error streak (host stopped
+// polling) disarms again. This also keeps the shared RX FIFO clear for EP0
+// SETUP reception during the post-config vendor-request phase.
+static bool     s_stream_enable;
 static uint32_t s_mic_err_streak;
 #define HAWK_MIC_ERR_STREAK_MAX 4000
 
@@ -124,9 +130,11 @@ static void hawk_set_rate_index(uint8_t idx) {
              hawk_rates[idx].sample_rate, idx);
     // The Xbox sets the rate right before opening the iso pipe: start offering
     // mic data now.
-    s_mic_stream_enable = true;
+    s_stream_enable = true;
     s_mic_err_streak = 0;
+    usbd_sof_enable(s_rhport, SOF_CONSUMER_USER, true);  // pace the iso pipes
     if (s_mic_open && !s_mic_inflight) mic_submit_next(s_rhport);
+    if (s_out_open && !s_out_inflight) out_submit_next(s_rhport);
 }
 
 // ---- usbd_class_driver_t callbacks ----------------------------------------
@@ -139,7 +147,7 @@ static void hawk_reset(uint8_t rhport) {
     g_hawk_reset++;
     s_mic_open = s_out_open = false;
     s_mic_inflight = s_out_inflight = false;
-    s_mic_stream_enable = false;
+    s_stream_enable = false;
     s_mic_err_streak = 0;
     s_extra_countdown = 0;
     usbd_sof_enable(rhport, SOF_CONSUMER_USER, false);
@@ -158,31 +166,34 @@ static uint16_t hawk_open(uint8_t rhport, tusb_desc_interface_t const *itf,
     usbd_edpt_iso_alloc(rhport, ep_addr, 64);
     usbd_edpt_iso_activate(rhport, (const tusb_desc_endpoint_t *)ep_desc);
 
+    // Arm NEITHER endpoint here. In dwc2 SLAVE mode an armed OUT endpoint (the
+    // headphone, EP 0x04) shares the single RX FIFO with EP0, and the Xbox
+    // sends the vendor SET_FEATURE(sample rate) on EP0 right after this
+    // SET_CONFIGURATION -- before it ever opens the iso pipes. Arming the OUT
+    // endpoint now starved EP0's SETUP reception, so that vendor SETUP never
+    // reached the core and the Xbox saw a STALL. Both directions are armed
+    // lazily once the rate request lands (hawk_set_rate_index), by which point
+    // the control phase is done.
     if (ep_addr == HAWK_EP_MIC_IN) {
         s_mic_open = true;
         s_mic_inflight = false;
-        // mic arming waits for the host's sample-rate request (see above)
     } else if (ep_addr == HAWK_EP_HEADPHONE_OUT) {
         s_out_open = true;
         s_out_inflight = false;
-        out_submit_next(rhport);
     }
-
-    // SOF interrupt on: hawk_sof is the stall watchdog for both endpoints.
-    usbd_sof_enable(rhport, SOF_CONSUMER_USER, true);
 
     g_hawk_open++;
     ESP_LOGI(TAG, "open iface %u (ep 0x%02X)", itf->bInterfaceNumber, ep_addr);
     return 18;
 }
 
+// Standard interface requests (SET/GET_INTERFACE) reach the class driver via
+// usbd's recipient router. VENDOR requests do NOT -- usbd short-circuits every
+// vendor-type control request to tud_vendor_control_xfer_cb (below), before the
+// recipient switch, so the communicator's SET_FEATURE lands there, not here.
 static bool hawk_control_xfer(uint8_t rhport, uint8_t stage,
                               tusb_control_request_t const *request) {
     if (stage != CONTROL_STAGE_SETUP) return true;
-
-    ESP_LOGI(TAG, "ctrl bmReqType=%02X bReq=%02X wValue=%04X wIndex=%04X wLen=%u",
-             request->bmRequestType, request->bRequest, request->wValue,
-             request->wIndex, request->wLength);
 
     if (request->bmRequestType_bit.type == TUSB_REQ_TYPE_STANDARD) {
         switch (request->bRequest) {
@@ -195,24 +206,36 @@ static bool hawk_control_xfer(uint8_t rhport, uint8_t stage,
             default: return false;
         }
     }
+    return false;
+}
 
-    if (request->bmRequestType_bit.type == TUSB_REQ_TYPE_VENDOR &&
-        request->bmRequestType_bit.direction == TUSB_DIR_OUT &&
+// Vendor EP0 handler. usbd.c routes ALL vendor-type control requests straight
+// here (bypassing the class driver + recipient routing), so this is where the
+// communicator's vendor SET_FEATURE arrives:
+//   bmRequestType 0x41 (OUT/vendor/interface), bRequest 0x03 (SET_FEATURE),
+//   wIndex 0: wValue = 0x0100 | rate_index  -> sample rate
+//   wIndex 1: wValue = 0/1                  -> AGC off/on
+// Both are zero-length control writes: ACK at the SETUP stage.
+bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
+                                tusb_control_request_t const *request) {
+    if (stage != CONTROL_STAGE_SETUP) return true;
+
+    if (request->bmRequestType_bit.direction == TUSB_DIR_OUT &&
         request->bRequest == TUSB_REQ_SET_FEATURE) {
         switch (request->wIndex) {
-            case 0:   // sample rate (wValue = 0x0100 | index)
+            case HAWK_VENDOR_FEATURE_SAMPLE_RATE:  // 0
                 hawk_set_rate_index((uint8_t)(request->wValue & 0xFF));
                 return tud_control_status(rhport, request);
-            case 1:   // AGC on/off
+            case HAWK_VENDOR_FEATURE_AGC:          // 1
                 g_hawk_agc = (uint8_t)(request->wValue & 1);
                 g_hawk_ctrl_agc++;
                 ESP_LOGI(TAG, "AGC -> %u", g_hawk_agc);
                 return tud_control_status(rhport, request);
-            default: return false;
+            default: break;
         }
     }
-
-    ESP_LOGW(TAG, "ctrl UNHANDLED (stalling)");
+    ESP_LOGW(TAG, "vendor ctrl UNHANDLED bmReq=%02X bReq=%02X wVal=%04X wIdx=%04X",
+             request->bmRequestType, request->bRequest, request->wValue, request->wIndex);
     return false;
 }
 
@@ -223,30 +246,41 @@ static bool hawk_xfer_cb(uint8_t rhport, uint8_t ep_addr, xfer_result_t result,
         if (result != XFER_RESULT_SUCCESS) {
             g_hawk_mic_err++;
             if (++s_mic_err_streak >= HAWK_MIC_ERR_STREAK_MAX) {
-                s_mic_stream_enable = false;   // host went away; stop the storm
+                s_stream_enable = false;   // host went away; stop the storm
                 ESP_LOGW(TAG, "mic stream disarmed (error streak)");
             }
         } else {
             s_mic_err_streak = 0;
         }
-        if (s_mic_open && s_mic_stream_enable) mic_submit_next(rhport);
+        if (s_mic_open && s_stream_enable) mic_submit_next(rhport);
     } else if (ep_addr == HAWK_EP_HEADPHONE_OUT) {
         s_out_inflight = false;
         if (result == XFER_RESULT_SUCCESS) out_account(xferred);
         else                               g_hawk_out_err++;
-        if (s_out_open) out_submit_next(rhport);
+        if (s_out_open && s_stream_enable) out_submit_next(rhport);
     }
     return true;
 }
 
-// SOF watchdog: completion-driven re-arm above is the primary pump; this only
-// recovers from a failed submit or a missed completion so neither direction
-// can stall (same pattern proven out in Falcon's camera streaming).
+// SOF (once per 1 ms USB frame) paces the iso pipes: an iso IN packet must be
+// sitting in the TX FIFO for EVERY host poll or the dwc2 flags "incomplete ISO
+// IN" and sends nothing (mic silence). Re-arming only on completion can't keep
+// up, so re-arm here every frame.
+//
+// This is gated on s_stream_enable, which only goes true once the vendor
+// SET_FEATURE(rate) request has been answered -- so during the post-config
+// vendor-request phase SOF is a no-op and cannot crowd EP0. (An earlier build
+// disabled SOF entirely to protect EP0, but the real EP0 problem was that
+// vendor requests were never dispatched; that is fixed in
+// tud_vendor_control_xfer_cb, so SOF pacing is safe again.)
 static void hawk_sof(uint8_t rhport, uint32_t frame_count) {
     (void)frame_count;
-    if (s_mic_open && s_mic_stream_enable && !s_mic_inflight) mic_submit_next(rhport);
+    if (!s_stream_enable) return;
+    if (s_mic_open && !s_mic_inflight) mic_submit_next(rhport);
     if (s_out_open && !s_out_inflight) out_submit_next(rhport);
 }
+
+void hawk_class_kick(void) { /* SOF drives arming now; nothing to do here */ }
 
 static const usbd_class_driver_t s_hawk_driver = {
     .name            = "hawk-comm",

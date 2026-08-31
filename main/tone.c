@@ -14,7 +14,7 @@
 
 static int16_t  s_sine[TONE_TABLE_SIZE];
 static uint32_t s_rate = 16000;
-static uint32_t s_phase;          // Q8.24 index into s_sine
+static uint32_t s_phase;          // 32-bit phase; table index = s_phase >> 24
 static uint32_t s_pos;            // sample position inside the 1 s pattern
 
 typedef struct { uint16_t freq_hz; } tone_note_t;
@@ -41,8 +41,9 @@ void tone_fill(int16_t *dst, uint32_t nsamples) {
             dst[i] = 0;
             s_phase = 0;
         } else {
-            // phase increment = freq/rate revolutions per sample, in Q8.24
-            uint32_t inc = (uint32_t)(((uint64_t)freq << 32) / s_rate) >> 8;
+            // One full cycle when the 32-bit phase wraps 2^32; the top 8 bits
+            // index the 256-entry table. inc = freq * 2^32 / rate.
+            uint32_t inc = (uint32_t)(((uint64_t)freq << 32) / s_rate);
             dst[i] = s_sine[s_phase >> 24];
             s_phase += inc;
         }
