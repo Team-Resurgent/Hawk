@@ -17,3 +17,6 @@ main/wifi_creds.h
 
 # Xbox test app build output
 xbox/HawkLoopback/out/
+
+# scratch launch captures
+*.log
