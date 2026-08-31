@@ -1,16 +1,34 @@
-# Hawk — Xbox Communicator emulator (ESP32-S3)
+<h1 align="center">Hawk</h1>
+
+<p align="center"><b>The original Xbox Communicator (voice headset), emulated on an ESP32-S3</b></p>
+
+<p align="center">
+  <a href="https://github.com/Team-Resurgent/Hawk/blob/master/LICENSE.md"><img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPL v3"></a>
+  <a href="https://github.com/Team-Resurgent/Hawk/actions/workflows/release.yml"><img src="https://github.com/Team-Resurgent/Hawk/actions/workflows/release.yml/badge.svg" alt="Release"></a>
+  <a href="https://discord.gg/VcdSfajQGK"><img src="https://img.shields.io/badge/chat-on%20discord-7289da.svg?logo=discord" alt="Discord"></a>
+</p>
+
+<p align="center">
+  <a href="https://ko-fi.com/J3J7L5UMN"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="ko-fi"></a>
+  <a href="https://www.patreon.com/teamresurgent"><img src="https://img.shields.io/badge/Patreon-F96854?style=for-the-badge&logo=patreon&logoColor=white" alt="Patreon"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/Team-Resurgent/Hawk/releases/latest"><img src="https://img.shields.io/badge/download-latest-brightgreen.svg?style=for-the-badge&logo=github" alt="Download"></a>
+</p>
 
 Hawk makes an ESP32-S3 present itself as the **original Xbox Communicator**
 (the controller headset — Microsoft's internal codename for it really was
 *Hawk*), so an **unmodified** Xbox title sees a real communicator: microphone
 in, headphone out. Sibling of
-[Talon](https://github.com/Team-Resurgent/Talon) (controller) and Falcon
-(camera).
+[Talon](https://github.com/Team-Resurgent/Talon) (controller) and
+[Falcon](https://github.com/Team-Resurgent/Falcon) (camera).
 
-**Milestone 1 (this repo):** the board has no microphone yet, so it "speaks" a
-recognizable **C5–E5–G5 arpeggio** into the mic endpoint and measures whatever
-the Xbox plays back to the headphone endpoint. Together with the bundled
-Xbox-side test app that closes the loop end to end:
+**Milestone 1 (this repo) — working, hardware-verified:** the board has no
+microphone yet, so it "speaks" a recognizable **C5–E5–G5 arpeggio** into the
+mic endpoint and measures whatever the Xbox plays back to the headphone
+endpoint. With the bundled Xbox-side test app the loop closes end to end on a
+real console:
 
 ```
 ESP32 tone ──iso IN──▶ Xbox mic XMO ──▶ TV speakers   (you hear the arpeggio)
@@ -18,6 +36,16 @@ ESP32 tone ──iso IN──▶ Xbox mic XMO ──▶ TV speakers   (you hear 
                               └──▶ headphone XMO ──iso OUT──▶ ESP32 stats
                                    (the ESP32 heartbeat logs level + frequency)
 ```
+
+The Xbox reads the tone (peak 12000, ~491 Hz averaged across the arpeggio),
+plays it out the TV **and** loops it back to the headphone endpoint, which the
+ESP32 receives and measures — proving both directions of the audio path.
+
+> The Xbox side needs the **Hawk USB class driver** present in the kernel/XAPI
+> USB stack. It ships in the retail `xvoice.lib`; the open-source
+> [RXDK](https://github.com/Team-Resurgent) toolchain carries a port of it (see
+> the RXDK-Libs `libxapi/usb/hawk` driver). Stock setups without that driver
+> will enumerate the device but cannot open the communicator XMOs.
 
 Planned next: stream a decoded **OGG file** as the mic source, WiFi
 provisioning/web UI (ported from Talon's `wifi_net`), and eventually a real
